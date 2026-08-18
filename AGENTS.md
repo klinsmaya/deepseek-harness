@@ -147,3 +147,13 @@ Docs accompany every code change: update affected README and JSDoc contracts tog
 ## Vendoring policy
 
 `vendor/` packages are pinned source copies (manifest with upstream SHAs in [vendor/README.md](vendor/README.md)). Update via the sync procedure there; re-apply or retire the logged local modifications; rerun `pnpm run test && pnpm run build`.
+
+## Cursor Cloud specific instructions
+
+Node: the engines floor is 22.19+, but a fresh shell may default to `/exec-daemon/node` (v22.14, below the floor). This VM's `~/.bashrc` prepends nvm's 22.22.2; if `node --version` reports an older version, run `nvm use 22.22.2`. Always drive pnpm through `corepack` so the pinned `pnpm@11.7.0` is used.
+
+Lefthook postinstall: Cursor owns `core.hooksPath` (its agent-hooks path), so the dsh lefthook installer refuses to replace it and the `pnpm install` postinstall fails. This is expected here — never set `DSH_LEFTHOOK_ALLOW_HOOKS_PATH_OVERRIDE`, which would hijack Cursor's hooks. The startup update script installs with `CI=true` so the installer self-skips, and `verify-deps-before-run=false` is set in `~/.config/pnpm/config.yaml` so `pnpm run <script>` never auto-reinstalls. If a `pnpm run` command fails with `refusing to replace user-owned core.hooksPath`, re-apply `pnpm config set verify-deps-before-run false --location=global`, or prefix that command with `CI=true`.
+
+Running keyless: no `DEEPSEEK_API_KEY` is set in this environment, so point the app at the mock server ([llm-mock-server](packages/test-support/llm-mock-server/README.md)) for an end-to-end run: start `corepack pnpm run mock:llm --port 8000 --api-key mock-key --sequence success --repeat-last`, then run `DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1 DEEPSEEK_API_KEY=mock-key corepack pnpm dsh web` (Web UI at http://127.0.0.1:3080) or the same env with `corepack pnpm dsh --profile headless "task"`. Add a real `DEEPSEEK_API_KEY` (secret) for live models.
+
+Full `pnpm run test` reports two `packages/skill/tool-skill` failures because the skill-catalog specs pick up the committed `.claude/skills`; this reflects the checkout, not environment setup. CI gates on `pnpm run test:coverage`.
