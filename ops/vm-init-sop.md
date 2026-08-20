@@ -28,6 +28,7 @@
 | `PANEL_PASSWORD` | 1Panel 管理员密码（`^[a-zA-Z0-9_!@#$%*,.?]{8,30}$`） | `1Panel@2026` |
 | `PANEL_BASE_DIR` | 1Panel 基础目录 | `/opt` |
 | `PANEL_LANGUAGE` | 面板语言（`en`/`zh` 等） | `zh` |
+| `TS_SSH` | 是否启用 Tailscale SSH（`1`/`0`） | `1` |
 | `START_WATCHDOG` | 是否启动 60s 自愈看护循环 | `1` |
 
 `TS_AUTHKEY` 属敏感信息，建议放入 Cursor 的 Secrets（注入为环境变量），不要写入仓库或明文分发。
@@ -50,8 +51,10 @@ sudo systemctl disable --now tailscaled 2>/dev/null || true   # 无 systemd 时�
 sudo tailscaled --tun=userspace-networking \
   --outbound-http-proxy-listen=localhost:1054 \
   --socks5-server=localhost:1055 >/tmp/tailscaled.log 2>&1 &
-sudo tailscale up --authkey="$TS_AUTHKEY" --hostname=cursor-cloud-agent
+sudo tailscale up --authkey="$TS_AUTHKEY" --hostname=cursor-cloud-agent --ssh
 ```
+
+`--ssh` 启用 Tailscale SSH（见第 7 节）；节点已在线时可用 `sudo tailscale set --ssh` 免重认证开启。
 
 让流量走 Tailscale 的 shell 中导出代理变量（不建议全局设置）：
 
@@ -119,15 +122,55 @@ sudo 1pctl user-info                         # 面板地址/账号/密码
 - 手动触发一次自愈：`sudo /usr/local/bin/vm-services-ensure.sh`。
 - 由于无 systemd，VM 重启后需重新执行 `bash ops/vm-init.sh`（或 `vm-services-ensure.sh`）拉起服务；把 `TS_AUTHKEY` 存为 Secret 可让全新 VM 免交互重连。
 
-## 7. 故障排查
+## 7. 从其它机器 SSH 登录（Tailscale SSH）
+
+因本机 `tailscaled` 运行在 userspace 模式（无 TUN 网卡），普通 sshd 的入站端口在 tailnet 内不可达；应使用 **Tailscale SSH**（由 tailscaled 自身处理 SSH，userspace 模式下可用），本机也无需安装 openssh-server。
+
+启用（`vm-init.sh` 在 `TS_SSH=1` 时自动完成；手动等价命令）：
+
+```sh
+sudo tailscale set --ssh          # 节点在线时启用，免重认证
+# 或首次登录时：sudo tailscale up --authkey=... --hostname=cursor-cloud-agent --ssh
+sudo tailscale debug prefs | grep RunSSH   # 应为 "RunSSH": true
+```
+
+在同一 tailnet、已登录 Tailscale 的另一台机器上连接（用户用 `ubuntu`，本机主账户、免密 sudo）：
+
+```sh
+ssh ubuntu@cursor-cloud-agent      # MagicDNS 名称
+ssh ubuntu@100.72.58.76            # 或 Tailscale IP
+tailscale ssh ubuntu@cursor-cloud-agent   # 等价
+```
+
+前置条件：tailnet 的 ACL 必须包含 `ssh` 规则（多数默认 ACL 已自带，开箱即用）。如改过 ACL，在 [ACL 管理页](https://login.tailscale.com/admin/acls) 添加：
+
+```json
+"ssh": [
+  { "action": "check", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot"] }
+]
+```
+
+- `action` 用 `accept` 则完全免交互；用 `check` 首次连接会弹浏览器二次确认（之后一段时间免确认）。
+- 连 `root` 需把 `users` 加上 `"root"`（Tailscale SSH 以 tailnet 身份授权，不校验系统密码）。
+
+关于 **auth key 与 SSH 登录的关系**：auth key 只用于把“设备/节点”加入 tailnet（`tailscale up --authkey=...`），**不是 SSH 登录凭据**，不能直接“用 authkey 登录 SSH”。SSH 的鉴权由**连接方的 tailnet 身份 + ACL**决定，无需密码或密钥。若发起连接的机器还没入网，可先用 authkey 让它入网，再用上面的 `ssh` 命令连接：
+
+```sh
+# 在发起连接的新机器上
+sudo tailscale up --authkey="tskey-auth-..."   # 用 authkey 让本机加入 tailnet
+ssh ubuntu@cursor-cloud-agent                   # 随后按 tailnet 身份 SSH
+```
+
+## 8. 故障排查
 
 - Tailscale 处于 `NeedsLogin`：确认 `TS_AUTHKEY` 有效且未过期；用可重用、非 ephemeral 的 key。
 - Tailscale 无法作为 exit node：userspace 模式的预期限制；作为普通节点被访问不受影响。
 - `dockerd` 启动失败：查看 `/tmp/dockerd.log`；确认 `daemon.json` 为 `fuse-overlayfs` 且 iptables 为 legacy。
 - 1Panel 打不开：必须带安全入口路径（`/1panel`）；查看 `/tmp/1panel.log`；端口占用改 `PANEL_PORT`。
 - apt 交互式 conffile 卡住：加 `-o Dpkg::Options::=--force-confold` 或运行 `dpkg --configure -a --force-confold`。
+- SSH 连接被拒：确认本机 `RunSSH: true`，且 tailnet ACL 含 `ssh` 规则、发起方已登录同一 tailnet；`autogroup:nonroot` 用户用 `ubuntu` 而非 `root`。
 
-## 8. 卸载
+## 9. 卸载
 
 ```sh
 sudo pkill -f '/usr/bin/1panel'; sudo 1pctl uninstall   # 按提示确认

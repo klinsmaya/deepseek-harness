@@ -17,6 +17,7 @@
 #   PANEL_BASE_DIR    1Panel base directory.          Default: /opt
 #   PANEL_LANGUAGE    1Panel UI language (en|zh|...). Default: zh
 #   ONEPANEL_CHANNEL  1Panel release channel.         Default: stable
+#   TS_SSH            Enable Tailscale SSH (1|0).      Default: 1
 #   START_WATCHDOG    Launch a 60s self-heal loop.    Default: 1
 #
 # Usage:
@@ -35,6 +36,9 @@ PANEL_LANGUAGE="${PANEL_LANGUAGE:-zh}"
 ONEPANEL_CHANNEL="${ONEPANEL_CHANNEL:-stable}"
 START_WATCHDOG="${START_WATCHDOG:-1}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"
+TS_SSH="${TS_SSH:-1}"
+SSH_FLAG=""
+[ "$TS_SSH" = "1" ] && SSH_FLAG="--ssh"
 
 log() { printf '\033[0;34m[vm-init %s] %s\033[0m\n' "$(date +%H:%M:%S)" "$*"; }
 warn() { printf '\033[0;33m[vm-init %s] %s\033[0m\n' "$(date +%H:%M:%S)" "$*" >&2; }
@@ -79,15 +83,18 @@ up_tailscale() {
     | grep -o '"BackendState":"[^"]*"' | head -1 | cut -d'"' -f4)"
   if [ "$state" = "Running" ]; then
     log "tailscale already connected: $(sudo tailscale ip -4 2>/dev/null | head -1)"
+    if [ -n "$SSH_FLAG" ]; then
+      sudo tailscale set --ssh >/dev/null 2>&1 && log "Tailscale SSH enabled"
+    fi
     return 0
   fi
   if [ -z "$TS_AUTHKEY" ]; then
     warn "TS_AUTHKEY not set; tailscale installed but NOT logged in (BackendState=$state)"
-    warn "re-run with TS_AUTHKEY=... or run: sudo tailscale up --hostname=$TS_HOSTNAME"
+    warn "re-run with TS_AUTHKEY=... or run: sudo tailscale up --hostname=$TS_HOSTNAME $SSH_FLAG"
     return 0
   fi
-  log "bringing tailscale up with auth key"
-  sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" \
+  log "bringing tailscale up with auth key${SSH_FLAG:+ (Tailscale SSH enabled)}"
+  sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" $SSH_FLAG \
     || die "tailscale up failed (check the auth key)"
   log "tailscale connected: $(sudo tailscale ip -4 2>/dev/null | head -1)"
 }
@@ -249,7 +256,7 @@ state="\$(sudo tailscale status --json 2>/dev/null | tr -d ' ' | grep -o '"Backe
 if [ "\$state" != "Running" ]; then
   key="\${TS_AUTHKEY:-}"
   [ -z "\$key" ] && [ -r "\$HOME/.config/tailscale/authkey" ] && key="\$(cat "\$HOME/.config/tailscale/authkey")"
-  if [ -n "\$key" ]; then log "tailscale up (state=\$state)"; sudo tailscale up --authkey="\$key" --hostname="${TS_HOSTNAME}" >>\$LOG 2>&1; fi
+  if [ -n "\$key" ]; then log "tailscale up (state=\$state)"; sudo tailscale up --authkey="\$key" --hostname="${TS_HOSTNAME}" ${SSH_FLAG} >>\$LOG 2>&1; fi
 fi
 
 # 1Panel
@@ -283,6 +290,11 @@ ENSURE
 verify() {
   log "==== verification ===="
   sudo tailscale status 2>/dev/null | grep -i "$TS_HOSTNAME" || warn "tailscale not connected"
+  if [ -n "$SSH_FLAG" ]; then
+    sudo tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": true' \
+      && log "Tailscale SSH: enabled (ssh <user>@$TS_HOSTNAME)" \
+      || warn "Tailscale SSH not enabled"
+  fi
   sudo docker version --format 'docker server {{.Server.Version}}' 2>/dev/null || warn "docker not ready"
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PANEL_PORT}/${PANEL_ENTRANCE}" 2>/dev/null)"
