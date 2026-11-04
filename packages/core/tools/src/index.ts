@@ -21,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 // augmentation. The seam stays optional at runtime — see `serviceAsk`.
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type { ToolCallView, ToolResultView } from './presentation.ts'
-import { assertSupportedJsonSchema, validateJsonSchemaValue } from './json-schema.ts'
+import { assertSupportedJsonSchema, JsonSchemaError, validateJsonSchemaValue } from './json-schema.ts'
 import type { JsonSchemaNode } from './json-schema.ts'
 import { createRunCodeTool, RUN_CODE_NAME } from './ptc.ts'
 import type { PtcSdkLanguage } from './ptc.ts'
@@ -792,6 +792,99 @@ interface FusedToolSignal {
   dispose(): void
 }
 
+/**
+ * Whether a schema object or any nested data value has an own getter.
+ * Child values are taken from property descriptors, so getters are not invoked.
+ * @param value - candidate parameter schema object.
+ * @returns Whether any visited own property is a getter.
+ */
+function hasParameterGetter(value: object): boolean {
+  const pending: object[] = [value]
+  while (pending.length > 0) {
+    const node = pending.pop() as object
+    for (const key of Reflect.ownKeys(node)) {
+      const descriptor = Object.getOwnPropertyDescriptor(node, key) as PropertyDescriptor
+      if (descriptor.get !== undefined) return true
+      const child: unknown = descriptor.value
+      if (typeof child === 'object' && child !== null) pending.push(child)
+    }
+  }
+  return false
+}
+
+/**
+ * Reject parameter schemas that are not lossless object-rooted JSON.
+ * The detail is included only when reading the schema itself threw.
+ * @param name - tool name being registered.
+ * @param detail - optional thrown-error text.
+ * @returns The registration error.
+ */
+/** Annotation keys that may appear on a parameter schema with no `type`. */
+const PARAMETER_ANNOTATIONS = new Set(['description', 'title', 'default', 'examples'])
+
+function parameterSchemaError(name: string, detail?: string): JsonSchemaError {
+  const suffix = detail === undefined ? '' : ` (${detail})`
+  return new JsonSchemaError([
+    `tool "${name}" parameters must be a lossless JSON Schema object with type "object"${suffix}`,
+  ])
+}
+
+/**
+ * Object roots are sent to the model. Annotation-only schemas, including `{}`,
+ * are the unconstrained form already registered by fixtures and stay as written.
+ * A property map or any other root is the schema providers reject for the whole request.
+ * @param snapshot - detached parameter schema.
+ * @returns Whether registration may keep this root.
+ */
+function parameterRootAllowed(snapshot: Record<string, unknown>): boolean {
+  if (snapshot['type'] === 'object') return true
+  return Object.keys(snapshot).every(key => PARAMETER_ANNOTATIONS.has(key))
+}
+
+/**
+ * Copy one tool's parameters into a frozen registry-owned snapshot.
+ *
+ * An object root or an annotation-only schema is required. Keywords outside
+ * the enforced subset, including MCP `$schema`, stay on an object root so a
+ * legal external schema can still be registered. A getter runs during this
+ * copy and then never again: later projection reads the snapshot. The
+ * caller's own plain object is frozen so a `defineTool` validation closure
+ * cannot be rewritten by a later plugin. A schema that is not lossless, or
+ * whose root is a property map or non-object `type`, throws and is not registered.
+ * @param name - tool name being registered.
+ * @param definition - the caller's definition; its `parameters` are read here so a throwing getter stays inside this function.
+ * @returns The frozen snapshot stored on the registry definition.
+ */
+/**
+ * Validate `definition.parameters` and keep a provider-safe object on the definition.
+ *
+ * A parameters getter stays in place: each later read, including a PTC run's
+ * schema snapshot, still sees the current value. Plain object roots are frozen
+ * in place so a later plugin cannot rewrite a `defineTool` validation closure.
+ * Nested getters and annotation-only objects are replaced with one frozen snapshot.
+ * @param name - tool name being registered.
+ * @param definition - caller-owned definition stored in the registry.
+ */
+function isolateRegisteredParameters(name: string, definition: ToolDefinition): void {
+  const descriptor = Object.getOwnPropertyDescriptor(definition, 'parameters')
+  let current: Record<string, unknown>
+  let snapshot: Record<string, unknown> | undefined
+  try {
+    current = definition.parameters
+    snapshot = snapshotJsonValue(current)
+  } catch (error: unknown) {
+    throw parameterSchemaError(name, errorMessage(error))
+  }
+  if (snapshot === undefined || !parameterRootAllowed(snapshot)) throw parameterSchemaError(name)
+  if (descriptor?.get !== undefined) return
+  if (!hasParameterGetter(current) && current['type'] === 'object') {
+    deepFreeze(current)
+    return
+  }
+  const accepted = snapshot['type'] === 'object' ? snapshot : { ...snapshot, type: 'object' }
+  definition.parameters = deepFreeze(accepted)
+}
+
 /** Resolve the run_code overlap cap at the owning config boundary (direct construction bypasses the Loader schema). */
 function resolveMaxParallelSubCalls(value: number | undefined): number {
   const maxParallelSubCalls = value ?? 10
@@ -1065,8 +1158,15 @@ export class ToolRuntime extends Service {
   /**
    * Register globally or in the calling agent scope. Scoped tools shadow
    * globals; duplicates within one layer and the reserved `run_code` name fail.
+   * `parameters` must be lossless JSON. An object root (`type: "object"`) is
+   * frozen in place. An annotation-only schema such as `{}` is stored with
+   * `type: "object"` added. A property map or other root is rejected. A
+   * `parameters` getter is checked once and left in place. Keywords outside
+   * the enforced subset, including `$schema`, are kept. A schema that fails
+   * this check throws {@link JsonSchemaError} and is not registered.
    * @param definition - tool schema, execution, and optional finalization/presentation callbacks.
    * @returns the exact disposer that unregisters the tool.
+   * @throws {JsonSchemaError} when `parameters` is not lossless JSON, or its root is neither `type: "object"` nor annotation-only.
    */
   register(definition: ToolDefinition): () => void {
     const name = definition.name
@@ -1088,6 +1188,7 @@ export class ToolRuntime extends Service {
     if (name === RUN_CODE_NAME) {
       throw new Error(`tool name "${RUN_CODE_NAME}" is reserved for the PTC mode presentation transport and cannot be registered or shadowed`)
     }
+    isolateRegisteredParameters(name, definition)
     return this.layers.effect(
       this.ctx,
       layer => layer.tools.insert(name, definition),
@@ -1290,6 +1391,9 @@ export class ToolRuntime extends Service {
   private schemaOf(definition: ToolDefinition, detachParameters: boolean): ToolSchema {
     const { name, description, parameters, deferLoading } = definition
     const detached = detachParameters ? snapshotJsonValue(parameters) : parameters
+    // register() retains only a lossless snapshot. run_code's live getter also
+    // returns lossless JSON, so projection no longer observes this failure.
+    /* v8 ignore next -- retained parameter snapshots are lossless JSON. */
     if (detached === undefined) {
       throw new Error(`tool "${name}" parameters must be lossless JSON before schema projection`)
     }
