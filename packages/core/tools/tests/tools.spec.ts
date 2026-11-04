@@ -2065,16 +2065,145 @@ describe('ToolRuntime', () => {
     expect(cursor).toEqual({ type: 'string' })
   })
 
-  it('rejects schema projection when a raw registration is not lossless JSON', async () => {
+  it('rejects a plugin parameter schema that would poison other tools and keeps their validation', async () => {
     const ctx = await setup()
-    ctx.tools.register({
-      ...echoTool,
-      name: 'lossy-schema',
-      parameters: { type: 'object', default: Number.NaN },
+    const kept = defineTool({
+      name: 'kept_echo',
+      description: 'echo arguments back',
+      parameters: { text: { type: 'string' } },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args) { return args.text ?? '' },
+    })
+    ctx.tools.register(kept)
+    const call = (args: unknown) => ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('kept'), name: 'kept_echo', arguments: args,
     })
 
-    expect(() => ctx.tools.schemas())
-      .toThrow('tool "lossy-schema" parameters must be lossless JSON before schema projection')
+    const bare = {
+      name: 'vision_query',
+      description: 'creator plugin tool',
+      parameters: { images: { type: 'array' }, prompt: { type: 'string', required: true } },
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    } as ToolDefinition
+    await expect(ctx.plugin(Object.assign((inner: Context) => {
+      inner.tools.register(bare)
+    }, { inject: ['tools'] }))).rejects.toThrow(JsonSchemaError)
+    expect(ctx.tools.get('vision_query')).toBeUndefined()
+
+    let reads = 0
+    const sideEffect: ToolDefinition['parameters'] = {}
+    Object.defineProperty(sideEffect, 'type', { enumerable: true, get: () => 'object' })
+    Object.defineProperty(sideEffect, 'properties', {
+      enumerable: true,
+      get() {
+        reads += 1
+        const text = (kept.parameters as { properties: { text: { type: string } } }).properties.text
+        text.type = 'integer'
+        return { query: { type: 'string' } }
+      },
+    })
+    expect(() => ctx.tools.register({
+      name: 'creator_side_effect',
+      description: 'schema getter rewrites another tool',
+      parameters: sideEffect,
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    })).toThrow(JsonSchemaError)
+    expect(reads).toBe(1)
+    expect(ctx.tools.get('creator_side_effect')).toBeUndefined()
+
+    const listed: ToolDefinition['parameters'] = { type: 'object' }
+    Object.defineProperty(listed, 'properties', {
+      enumerable: true,
+      get() {
+        reads += 1
+        return { query: { type: 'string' } }
+      },
+    })
+    ctx.tools.register({
+      name: 'creator_listed',
+      description: 'getter schema read once',
+      parameters: listed,
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    })
+    ctx.tools.register({
+      name: 'creator_external',
+      description: 'keeps provider keywords',
+      parameters: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: { name: { type: 'string' } },
+      },
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    })
+    ctx.tools.register({
+      name: 'creator_unconstrained',
+      description: 'annotation-only parameters',
+      parameters: { description: 'any JSON' },
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    })
+    expect(() => ctx.tools.register({
+      name: 'creator_string_root',
+      description: 'non-object root',
+      parameters: { type: 'string' },
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    })).toThrow(JsonSchemaError)
+
+    let nestedReads = 0
+    const nested: Record<string, unknown> = {}
+    Object.defineProperty(nested, 'q', {
+      enumerable: true,
+      get() {
+        nestedReads += 1
+        if (nestedReads > 1) throw new Error('parameter schema side effect')
+        return { type: 'string' }
+      },
+    })
+    ctx.tools.register({
+      name: 'creator_nested_side_effect',
+      description: 'nested getter is snapshotted once',
+      parameters: { type: 'object', properties: nested },
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    })
+    expect(nestedReads).toBe(1)
+
+    expect(() => ctx.tools.register({
+      ...kept,
+      name: 'lossy-schema',
+      parameters: { type: 'object', default: Number.NaN },
+    })).toThrow(JsonSchemaError)
+
+    const assembly = await ctx.systemPrompt.assemble()
+    expect(assembly.tools.map(tool => tool.name)).toEqual([
+      'creator_external', 'creator_listed', 'creator_nested_side_effect', 'creator_unconstrained', 'kept_echo',
+    ])
+    expect(assembly.tools.find(tool => tool.name === 'kept_echo')?.parameters).toEqual({
+      type: 'object', properties: { text: { type: 'string' } },
+    })
+    expect(ctx.tools.schemas().find(tool => tool.name === 'creator_listed')?.parameters).toEqual({
+      type: 'object', properties: { query: { type: 'string' } },
+    })
+    expect(ctx.tools.schemas().find(tool => tool.name === 'creator_unconstrained')?.parameters).toEqual({
+      description: 'any JSON', type: 'object',
+    })
+    expect(reads).toBe(2)
+    expect(nestedReads).toBe(1)
+    expect(() => {
+      (kept.parameters as { properties: { text: { type: string } } }).properties.text.type = 'integer'
+    }).toThrow(TypeError)
+    expect(await call({ text: 'hi' })).toEqual({ content: [{ type: 'text', text: 'hi' }], isError: false, value: 'hi' })
+    const invalid = await call({ text: 1 })
+    expect(invalid.isError).toBe(true)
+    expect(invalid.content[0]?.type === 'text' ? invalid.content[0].text : '').toContain('"text" must be a string')
   })
 
   it('rejects a non-positive or non-finite registration timeout', async () => {

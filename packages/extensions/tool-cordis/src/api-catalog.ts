@@ -3424,9 +3424,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'register(definition: ToolDefinition): () => void',
-        description: 'Register globally or in the calling agent scope. Scoped tools shadow globals; duplicates within one layer and the reserved `run_code` name fail.',
+        description: 'Register globally or in the calling agent scope. Scoped tools shadow globals; duplicates within one layer and the reserved `run_code` name fail. `parameters` must be lossless JSON. An object root (`type: "object"`) is frozen in place. An annotation-only schema such as `{}` is stored with `type: "object"` added. A property map or other root is rejected. A `parameters` getter is checked once and left in place. Keywords outside the enforced subset, including `$schema`, are kept. A schema that fails this check throws JsonSchemaError and is not registered.',
         parameters: [{ name: 'definition', description: 'tool schema, execution, and optional finalization/presentation callbacks.' }],
         returns: 'the exact disposer that unregisters the tool.',
+        throws: ['{JsonSchemaError} when `parameters` is not lossless JSON, or its root is neither `type: "object"` nor annotation-only.'],
       },
       {
         signature: 'restrict(filter: ToolRestriction): () => void',
