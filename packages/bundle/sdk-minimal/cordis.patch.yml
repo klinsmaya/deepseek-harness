@@ -165,6 +165,9 @@
           * Please avoid commands that may produce a very large amount of output.
           * Please run long lived commands in the background, e.g. 'Start-Job' or start a server with Start-Process.
 
+    - id: delete-guard
+      name: '@deepseek-ai/dsh-delete-guard'
+
     - id: sessions
       name: '@deepseek-ai/dsh-session-persistence-jsonl'
       config:

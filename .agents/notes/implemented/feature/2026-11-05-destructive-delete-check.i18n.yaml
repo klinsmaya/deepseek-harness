@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-11-05-destructive-delete-check.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-11-05-destructive-delete-check.md
+/agent-note-destructive-delete-check:
+  en: 5cdb28450be3102a
+  zh: 7ae149ca1dccaa92
+/agent-note-destructive-delete-check/problem:
+  en: 63b23503632a7021
+  zh: 832e8966278d5c07
+/agent-note-destructive-delete-check/decision:
+  en: 814bd49ba083abde
+  zh: 0566b29379ce7905
+/agent-note-destructive-delete-check/recognition:
+  en: 70c97d9ada482d30
+  zh: 78519c1561c03df9
+/agent-note-destructive-delete-check/alternatives-considered:
+  en: c6b376f344756a08
+  zh: 7e92c890cd8283e3
+/agent-note-destructive-delete-check/consequences:
+  en: e14eb2c7675c2808
+  zh: 42d94ce42be89dd2
