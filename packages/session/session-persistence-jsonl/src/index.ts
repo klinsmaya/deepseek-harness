@@ -346,6 +346,14 @@ class JsonlSessionPersistence extends SessionPersistence {
     return { kind: 'jsonl', path: logPath(this.root, meta.cwd, meta.id, this.compression) }
   }
 
+  /**
+   * The configured directory that holds every session file for this backend.
+   * @returns the absolute root given to this backend.
+   */
+  override sessionStorageRoots(): readonly string[] {
+    return [this.root]
+  }
+
   // --- SessionPersistence service API ---
 
   /**

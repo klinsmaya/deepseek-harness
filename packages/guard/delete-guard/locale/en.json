@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Delete guard",
+    "description": "Requires confirmation before a command deletes session storage or a large file tree"
+  }
+}

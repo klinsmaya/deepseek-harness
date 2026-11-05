@@ -410,6 +410,14 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+
+/**
+ * Local directories that hold this backend's session files.
+ * A backend with no directory returns an empty list. The paths are the
+ * configured locations, not a listing of session ids.
+ * @returns absolute directory paths, or an empty list.
+ */
+sessionStorageRoots(): readonly string[]
 ```
 
 Types: [SessionId](core.zh.md)

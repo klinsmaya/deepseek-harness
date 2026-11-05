@@ -837,6 +837,35 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-deepseek-account-platform -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-delete-guard -->
+<a id="deepseek-aidsh-delete-guard"></a>
+
+## `@deepseek-ai/dsh-delete-guard`
+
+- `inject`: `tools`
+- `source`: [`packages/guard/delete-guard/src/index.ts:30`](../packages/guard/delete-guard/src/index.ts)
+
+```ts config-catalog
+/** Configuration for the delete check. */
+export interface Config {
+  /** Hold a recursive in-workspace delete with more files than this (default 10000). */
+  fileCountThreshold?: number
+  /** Hold a recursive in-workspace delete with more bytes than this (default 1 GiB). */
+  byteThreshold?: number
+  /**
+   * Stop counting after this many visited entries (default 20000). An
+   * unfinished walk is held even when the partial count is under the thresholds.
+   */
+  measureEntryCap?: number
+  /**
+   * Extra absolute session-storage directories. The mounted session
+   * persistence backend's roots are always included.
+   */
+  sessionRoots?: string[]
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-delete-guard -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-agent-team -->
 <a id="deepseek-aidsh-experimental-agent-team"></a>
 

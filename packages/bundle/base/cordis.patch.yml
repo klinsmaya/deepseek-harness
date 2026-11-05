@@ -451,6 +451,12 @@
         thresholds: [3, 5, 8]
         argumentsPreviewChars: 500
 
+    # Session-storage and large recursive deletes stay held even when the
+    # sandbox mode is danger-full-access. Approval policy ask confirms them;
+    # policy never, and a composition with no approval channel, denies them.
+    - id: delete-guard
+      name: '@deepseek-ai/dsh-delete-guard'
+
     # The shared base enables the stable model-facing web_search and web_fetch
     # tools. The Web app disables this host row and composes both tools per agent
     # preset; products with a stricter network policy override tool-web. DeepSeek

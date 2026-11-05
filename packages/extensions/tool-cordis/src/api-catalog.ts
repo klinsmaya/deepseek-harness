@@ -2263,6 +2263,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'options', description: 'optional cancellation.' }],
         returns: 'one snapshot per stored session.',
       },
+      {
+        signature: 'sessionStorageRoots(): readonly string[]',
+        description: 'Local directories that hold this backend\'s session files. A backend with no directory returns an empty list. The paths are the configured locations, not a listing of session ids.',
+        parameters: [],
+        returns: 'absolute directory paths, or an empty list.',
+      },
     ],
   },
   {

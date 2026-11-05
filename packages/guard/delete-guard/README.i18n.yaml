@@ -1,0 +1,67 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/guard/delete-guard/README.md
+/:
+  en: 298bd9e0d395f753
+  zh: 1396f69fd2924ed6
+/deepseek-ai-dsh-delete-guard:
+  en: dc7d0cf0543e7820
+  zh: 035375d0501a25c5
+/deepseek-ai-dsh-delete-guard/summary:
+  en: 1a98c555d5276e78
+  zh: 678740905e22ad3d
+/deepseek-ai-dsh-delete-guard/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 938c4dc21186ddaf
+/deepseek-ai-dsh-delete-guard/use-this-package:
+  en: ca37e63ec850c760
+  zh: 35ef05fdbb78ce8b
+/deepseek-ai-dsh-delete-guard/use-this-package/when-to-choose-it:
+  en: 2859c7c95f5b4c88
+  zh: 94f48d32b169fb40
+/deepseek-ai-dsh-delete-guard/use-this-package/setting-it-up:
+  en: 64779ad8e74a9d1c
+  zh: 1cb1ab24fc40471a
+/deepseek-ai-dsh-delete-guard/use-this-package/what-you-get:
+  en: 5cc8fc0a58b489ed
+  zh: 3ef4b3d449c856c5
+/deepseek-ai-dsh-delete-guard/understand-the-implementation:
+  en: 38230c58be1befa8
+  zh: dca9aa47f8e4aa77
+/deepseek-ai-dsh-delete-guard/understand-the-implementation/source-map:
+  en: 1a62da1f01b5c0bf
+  zh: d48f769ad0f87e72
+/deepseek-ai-dsh-delete-guard/further-exploration:
+  en: a2dc5f5165f0714d
+  zh: e3103346355bf71a
+/deepseek-ai-dsh-delete-guard/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result:
+  en: 7877631ca859b191
+  zh: fb6f2aa33f70b82c
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result/what-the-model-sees:
+  en: 195463d29d86c735
+  zh: 425add8198cb64fc
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result/what-the-model-sees/confirmation:
+  en: 4806ac98c548a13d
+  zh: 4de490e1a6152726
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result/what-the-model-sees/denial-when-approval-policy-is-never:
+  en: 4fbdf0d8e3f00d86
+  zh: dea12f7d64092e11
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result/what-the-model-sees/denial-when-no-approval-channel-is-available:
+  en: e246c0cd7ac1c391
+  zh: 08aafe504a5f809e
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result/token-effect:
+  en: 7749096797a12569
+  zh: 795af6ae8c27a80d
+/deepseek-ai-dsh-delete-guard/model-experience/conditional-tool-result/kv-cache-effect:
+  en: 63ef4b89c754a8c2
+  zh: 84047b4665d21759
+/deepseek-ai-dsh-delete-guard/known-limitations-and-deferred-work:
+  en: 6ea97ad9f2bded2c
+  zh: 5adff62075503bd3
+/deepseek-ai-dsh-delete-guard/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: e88aeb617ffb74ea
