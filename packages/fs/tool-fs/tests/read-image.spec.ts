@@ -469,6 +469,21 @@ describe('strict image-modality gate', () => {
     expect(result.isError).toBe(false)
   })
 
+  it('a failed image read leaves the shared tool list and a later text read usable', async () => {
+    await writeFile(join(dir, 'red.png'), PNG_1X1)
+    await writeFile(join(dir, 'note.txt'), 'hello from the other session\n')
+    const ctx = await setup()
+    const failed = await readImage(ctx, { file_path: 'red.png' }, agentOn('text-model'))
+    expect(failed.isError).toBe(true)
+    expect(text(failed)).toContain('does not declare image input')
+    const names = (await ctx.systemPrompt.assemble()).tools.map(tool => tool.name)
+    expect(names).toContain('read')
+    expect(names).toContain('read_image')
+    const note = await call(ctx, 'read', { file_path: 'note.txt' })
+    expect(note.isError).toBe(false)
+    expect(text(note)).toContain('hello from the other session')
+  })
+
   it.each([
     ['a text-only model', 'text-model'],
     ['a model without declared modalities', 'legacy-model'],
