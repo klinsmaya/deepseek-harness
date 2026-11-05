@@ -63,6 +63,8 @@ ctx.tools.register(defineTool({
 
 统一 schema DSL 支持 `string`、`number`、`integer`、`boolean`、`null`、`array`、`object`、仅供作者使用的 `json` 与恰好匹配一个分支的 `oneOf`；`InferValue` 在 16 层容器内保留精确类型，之后加宽为 `JsonValue`。原始 JSON Schema（`JsonSchemaNode`）是与 subagent、工作流和 MCP 共享的协议级对应类型。
 
+`register()` 会就地冻结普通的 `parameters` 对象。之后的写入不能改变该工具，也不能改变更早注册的工具。`parameters` 的 getter 会保留，并在每次模型请求时重新读取。如果读取某个工具的 schema 抛错，该工具不会进入这次请求，提示词组装仍会继续处理其他工具。
+
 ### 配置呈现模式
 
 `mode` 配置决定模型看到什么：`native`（每个可见 schema）或 `ptc`（只有 `run_code` 加一份生成 SDK）。运行时通过 `executionInstructions` 提供求值语法、输出方式和状态保留指引；本包负责工具调用规则、SDK 声明和图片结果附加。
@@ -165,7 +167,7 @@ ctx.tools.register(defineTool({
 
 #### 模型看到什么
 
-在普通模式下，模型会看到每个可见定义的确切名称、描述与 JSON Schema；已交付定义记录在生成的[工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tools)中。agent 作用域的限制、遮蔽与扩展注册会改变该 agent 的最终工具集合。
+在普通模式下，模型会看到每个可见定义的确切名称、描述与 JSON Schema；已交付定义记录在生成的[工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tools)中。agent 作用域的限制、遮蔽与扩展注册会改变该 agent 的最终工具集合。无法投影 schema 的工具不会出现在该次请求中；其他工具仍在。
 
 #### Token 影响
 
@@ -229,6 +231,7 @@ Program-only SDK bindings:
 
 这些限制说明注册表何时需要特别留意。它们是当前包约束，不是任务积压。
 
+- **从模型请求中省略的工具仍保持注册**：投影失败只把这一个工具从提示词里拿掉，其他工具仍可用。直接 `execute` 仍能运行它。同一次连续失败只记录一条日志。
 - **并发策略不是事件门禁**：`executionMode()` 直接读取已解析的工具定义；插件只能在自身拥有的定义上声明分类器。
 - **`tools/pre-execute` 有意不允许改写 `exec.arguments`**：否则日志记录与呈现的参数会与实际运行内容失去同步；改写设计记录在[拟议的 Agent Note](../../../.agents/notes/proposed/feature/2026-06-30-pre-tool-input-rewrite.zh.md)中。
 - **调用方定义的 subagent 与工作流结构化输出仍要求对象根**：这是消费方层面的守卫；共享 schema 词汇与工具输出支持任意 JSON 根。

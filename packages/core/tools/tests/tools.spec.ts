@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { createUserMessage, ToolCallId, HarnessError, type ContentBlock  } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -2075,6 +2075,104 @@ describe('ToolRuntime', () => {
 
     expect(() => ctx.tools.schemas())
       .toThrow('tool "lossy-schema" parameters must be lossless JSON before schema projection')
+  })
+
+  it('keeps later sessions runnable after an image tool schema starts failing', async () => {
+    const ctx = await setup()
+    const kept = defineTool({
+      name: 'kept_echo',
+      description: 'echo arguments back',
+      parameters: { text: { type: 'string' } },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args) { return args.text ?? '' },
+    })
+    ctx.tools.register(kept)
+    let poisoned = false
+    const imageTool = {
+      name: 'vision_read',
+      description: 'read an image',
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() {
+        poisoned = true
+        throw new Error('cannot read image')
+      },
+    } as ToolDefinition
+    Object.defineProperty(imageTool, 'parameters', {
+      enumerable: true,
+      get() {
+        if (!poisoned) return { type: 'object', properties: { file_path: { type: 'string' } } }
+        try {
+          const text = (kept.parameters as { properties: { text: { type: string } } }).properties.text
+          text.type = 'integer'
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error
+        }
+        throw new Error('image encoder failed')
+      },
+    })
+    ctx.tools.register(imageTool)
+    const warnings: string[] = []
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation((message) => {
+      warnings.push(String(message))
+    })
+
+    const before = await ctx.systemPrompt.assemble()
+    expect(before.tools.map(tool => tool.name)).toEqual(['kept_echo', 'vision_read'])
+    const failed = await ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('vision'), name: 'vision_read', arguments: { file_path: 'shot.png' },
+    })
+    expect(failed.isError).toBe(true)
+    expect(failed.content[0]?.type === 'text' ? failed.content[0].text : '').toContain('cannot read image')
+
+    const after = await ctx.systemPrompt.assemble()
+    const again = await ctx.systemPrompt.assemble()
+    expect(after.tools.map(tool => tool.name)).toEqual(['kept_echo'])
+    expect(again.tools).toEqual(after.tools)
+    expect(after.tools[0]?.parameters).toEqual({
+      type: 'object', properties: { text: { type: 'string' } },
+    })
+    expect(warnings).toEqual([
+      'tools: omitting "vision_read" from model requests because its schema cannot be projected: image encoder failed',
+    ])
+    const echoed = await ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('kept'), name: 'kept_echo', arguments: { text: 'still here' },
+    })
+    expect(echoed).toMatchObject({ isError: false, value: 'still here' })
+    const rejected = await ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('kept-bad'), name: 'kept_echo', arguments: { text: 1 },
+    })
+    expect(rejected.isError).toBe(true)
+
+    poisoned = false
+    expect((await ctx.systemPrompt.assemble()).tools.map(tool => tool.name)).toEqual(['kept_echo', 'vision_read'])
+    poisoned = true
+    expect((await ctx.systemPrompt.assemble()).tools.map(tool => tool.name)).toEqual(['kept_echo'])
+    expect(warnings).toHaveLength(2)
+    warn.mockRestore()
+  })
+
+  it('freezes plain parameter objects and leaves an already frozen or empty schema untouched', async () => {
+    const ctx = await setup()
+    const frozen = { type: 'object', properties: { text: { type: 'string' } } }
+    Object.freeze(frozen)
+    ctx.tools.register({
+      ...echoTool,
+      name: 'already-frozen',
+      parameters: frozen,
+    })
+    ctx.tools.register({
+      ...echoTool,
+      name: 'missing-parameters',
+      parameters: null,
+    } as ToolDefinition)
+    expect(Object.isFrozen(ctx.tools.get('already-frozen')?.parameters)).toBe(true)
+    expect(ctx.tools.get('missing-parameters')?.parameters).toBeNull()
+    expect(() => {
+      (frozen as { properties: { text: { type: string } } }).properties.text.type = 'integer'
+    }).toThrow(TypeError)
   })
 
   it('rejects a non-positive or non-finite registration timeout', async () => {

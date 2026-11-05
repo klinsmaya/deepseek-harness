@@ -11,7 +11,7 @@ import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
 import type { PtcRunRequest, PtcRunResult } from '@deepseek-ai/dsh-ptc-runtime'
 import ToolRuntime, { CodeRunFailedError, RUN_CODE_NAME, TOOL_ABORTED_BEFORE_DISPATCH, defineContentToolFixture, defineTool } from '@deepseek-ai/dsh-tools'
-import type { Config, JsonSchemaNode, PostToolDecision, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import type { Config, JsonSchemaNode, PostToolDecision, ToolDefinition, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import ApprovalService, { type ApprovalOutcome, type ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
@@ -213,6 +213,25 @@ describe('mode-aware wire contribution', () => {
     const assembly = await systemPrompt.assemble()
     expect(assembly.tools.map(tool => tool.name)).toEqual(['echo'])
     expect(assembly.sections.some(section => section.name === 'tools:sdk')).toBe(false)
+  })
+
+  it("mode 'ptc' still assembles run_code when another tool's schema cannot be projected", async () => {
+    const { ctx, systemPrompt } = await setup({ mode: 'ptc' })
+    const broken = {
+      name: 'vision_read',
+      description: 'read an image',
+      output: { schema: { type: 'null' }, render: () => [] },
+      async execute() { return null },
+    } as ToolDefinition
+    Object.defineProperty(broken, 'parameters', {
+      enumerable: true,
+      get() { throw new Error('image encoder failed') },
+    })
+    ctx.tools.register(broken)
+    const assembly = await systemPrompt.assemble()
+    expect(assembly.tools.map(tool => tool.name)).toEqual([RUN_CODE_NAME])
+    const sdk = assembly.sections.find(section => section.name === 'tools:sdk')
+    expect(sdk?.text).not.toContain('vision_read')
   })
 
   it("mode 'ptc' contributes exactly [run_code] plus the SDK section declaring the other tools", async () => {

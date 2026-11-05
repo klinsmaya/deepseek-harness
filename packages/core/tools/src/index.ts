@@ -846,6 +846,8 @@ export class ToolRuntime extends Service {
    */
   private ptcTransport: ToolDefinition | undefined
   private readonly ptcContext: Context
+  /** Tools whose latest schema projection failed; the next success clears the name. */
+  private readonly unprojectableTools = new Set<string>()
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'tools')
@@ -1020,8 +1022,7 @@ export class ToolRuntime extends Service {
     const view = this.view(scope)
     const mode = this.modeFor(scope)
     if (mode === 'native') {
-      const schemas = [...view.visible.values()].map(definition => this.schemaOf(definition, false))
-      return { schemas, knownNames: [...view.knownNames] }
+      return { schemas: this.projectRequestSchemas(view.visible.values()), knownNames: [...view.knownNames] }
     }
     // Validate the runtime language BEFORE projecting schemas: schemaOf reads
     // run_code's language-aware description/parameters getters, whose own
@@ -1029,11 +1030,57 @@ export class ToolRuntime extends Service {
     // renderer-table rejection the canonical assembly-time error for a
     // language with no SDK renderer.
     this.requirePtcRuntime(mode)
-    const schemas = [...view.visible.values()].map(definition => this.schemaOf(definition, false))
     return {
-      schemas: schemas.filter(schema => schema.name === RUN_CODE_NAME),
+      schemas: this.projectRequestSchemas(view.visible.values()).filter(schema => schema.name === RUN_CODE_NAME),
       knownNames: [RUN_CODE_NAME],
     }
+  }
+
+  /**
+   * Freeze a plain parameter object before any later request can read it.
+   * A getter stays live: `run_code` and other dynamic schemas are re-read
+   * per projection. Freezing the earlier tools first means a getter that
+   * writes into them throws instead of changing every later session.
+   */
+  private freezePlainParameters(definition: ToolDefinition): void {
+    const descriptor = Object.getOwnPropertyDescriptor(definition, 'parameters')
+    if (descriptor?.get !== undefined) return
+    const parameters: unknown = definition.parameters
+    if (typeof parameters !== 'object' || parameters === null) return
+    deepFreeze(parameters)
+  }
+
+  /**
+   * Project one request's tools independently. A schema read that throws is
+   * omitted from this request and logged once per failure streak. The
+   * registry entry stays, and the failure does not reject the other tools.
+   */
+  private projectRequestSchemas(definitions: Iterable<ToolDefinition>): ToolSchema[] {
+    const schemas: ToolSchema[] = []
+    for (const definition of definitions) {
+      const schema = this.projectRequestSchema(definition)
+      if (schema !== undefined) schemas.push(schema)
+    }
+    return schemas
+  }
+
+  private projectRequestSchema(definition: ToolDefinition): ToolSchema | undefined {
+    try {
+      const schema = this.schemaOf(definition)
+      this.unprojectableTools.delete(definition.name)
+      return schema
+    } catch (error: unknown) {
+      this.warnUnprojectable(definition.name, error)
+      return undefined
+    }
+  }
+
+  private warnUnprojectable(name: string, error: unknown): void {
+    if (this.unprojectableTools.has(name)) return
+    this.unprojectableTools.add(name)
+    this.ctx.logger.warn(
+      `tools: omitting "${name}" from model requests because its schema cannot be projected: ${errorMessage(error)}`,
+    )
   }
 
   /**
@@ -1065,6 +1112,10 @@ export class ToolRuntime extends Service {
   /**
    * Register globally or in the calling agent scope. Scoped tools shadow
    * globals; duplicates within one layer and the reserved `run_code` name fail.
+   * A plain `parameters` object is frozen in place. A later write cannot change
+   * this tool or a tool registered earlier. A `parameters` getter stays live.
+   * When projecting model requests, a tool whose schema cannot be read is
+   * omitted; that failure does not reject assembly of the other tools.
    * @param definition - tool schema, execution, and optional finalization/presentation callbacks.
    * @returns the exact disposer that unregisters the tool.
    */
@@ -1088,6 +1139,7 @@ export class ToolRuntime extends Service {
     if (name === RUN_CODE_NAME) {
       throw new Error(`tool name "${RUN_CODE_NAME}" is reserved for the PTC mode presentation transport and cannot be registered or shadowed`)
     }
+    this.freezePlainParameters(definition)
     return this.layers.effect(
       this.ctx,
       layer => layer.tools.insert(name, definition),
@@ -1266,30 +1318,34 @@ export class ToolRuntime extends Service {
    * @returns one deep-cloned schema per visible tool.
    */
   schemas(scope?: ScopeKey): ToolSchema[] {
-    return [...this.view(scope).visible.values()].map(definition => this.schemaOf(definition, true))
+    return [...this.view(scope).visible.values()].map(definition => this.schemaOf(definition))
   }
 
   /** Project visible callable tools onto the generated PTC mode SDK contract. */
   private sdkSchemas(scope?: ScopeKey): ToolSdkSchema[] {
-    return [...this.view(scope).visible.values()]
-      .filter(definition => definition.name !== RUN_CODE_NAME)
-      .map((definition): ToolSdkSchema => {
+    const schemas: ToolSdkSchema[] = []
+    for (const definition of this.view(scope).visible.values()) {
+      if (definition.name === RUN_CODE_NAME) continue
+      try {
+        const schema = this.schemaOf(definition)
         const output = snapshotJsonValue(definition.output.schema)
         /* v8 ignore next -- registration already validated and retained this schema as lossless JSON. */
         if (output === undefined) {
           throw new Error(`tool "${definition.name}" output schema must be lossless JSON before SDK projection`)
         }
-        return {
-          ...this.schemaOf(definition, true),
-          output,
-        }
-      })
+        this.unprojectableTools.delete(definition.name)
+        schemas.push({ ...schema, output })
+      } catch (error: unknown) {
+        this.warnUnprojectable(definition.name, error)
+      }
+    }
+    return schemas
   }
 
-  /** Project one definition onto the model-facing schema fields. */
-  private schemaOf(definition: ToolDefinition, detachParameters: boolean): ToolSchema {
+  /** Project one definition onto a detached model-facing schema. */
+  private schemaOf(definition: ToolDefinition): ToolSchema {
     const { name, description, parameters, deferLoading } = definition
-    const detached = detachParameters ? snapshotJsonValue(parameters) : parameters
+    const detached = snapshotJsonValue(parameters)
     if (detached === undefined) {
       throw new Error(`tool "${name}" parameters must be lossless JSON before schema projection`)
     }

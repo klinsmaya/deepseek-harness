@@ -63,6 +63,8 @@ ctx.tools.register(defineTool({
 
 The unified schema DSL supports `string`, `number`, `integer`, `boolean`, `null`, `array`, `object`, author-only `json`, and exact-one `oneOf`; `InferValue` preserves exact types through 16 container levels before widening to `JsonValue`. A raw JSON Schema (`JsonSchemaNode`) is the wire-level counterpart shared with subagents, workflows, and MCP.
 
+`register()` freezes a plain `parameters` object in place. A later write cannot change that tool or a tool registered earlier. A `parameters` getter stays live and is read again for each model request. If reading one tool's schema throws, that tool is left out of the request and prompt assembly continues for the other tools.
+
 ### Configure the presentation mode
 
 The `mode` config decides what the model sees: `native` (every visible schema) or `ptc` (only `run_code` plus a generated SDK). The runtime supplies evaluation syntax, output syntax and state-retention guidance through `executionInstructions`; this package owns tool-call rules, SDK declarations and image-result attachment.
@@ -165,7 +167,7 @@ The package-level contract is enough for most consumers; read these when you nee
 
 #### What the model sees
 
-In normal mode the model sees each visible definition's exact name, description, and JSON Schema; the shipped definitions are recorded in the generated [tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-tools). Agent-scoped restrictions, shadows, and extension registrations change that agent's end-tool set.
+In normal mode the model sees each visible definition's exact name, description, and JSON Schema; the shipped definitions are recorded in the generated [tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-tools). Agent-scoped restrictions, shadows, and extension registrations change that agent's end-tool set. A tool whose schema cannot be projected is absent from that request; the other tools stay.
 
 #### Token effect
 
@@ -229,6 +231,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 These limits define when the registry needs special care. They are current package constraints, not a task backlog.
 
+- **A tool omitted from model requests stays registered** — projection failure hides that one tool from the prompt and leaves every other tool available. A direct `execute` can still run it. The omission is logged once per failure streak.
 - **Concurrency policy is not an event gate** — `executionMode()` reads the resolved tool definition directly; plugins can only declare a classifier on definitions they own.
 - **`tools/pre-execute` deliberately cannot rewrite `exec.arguments`** — logged and rendered args would desync from what ran; the rewrite design is [a proposed Agent Note](../../../.agents/notes/proposed/feature/2026-06-30-pre-tool-input-rewrite.md).
 - **Caller-defined subagent and workflow structured outputs remain object-rooted** — this is a consumer-level guard; the shared schema vocabulary and tool outputs support every JSON root.
